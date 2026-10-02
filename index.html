@@ -35,12 +35,12 @@ nav div.on{color:#ffcc33}nav div span{display:block;font-size:24px}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script>
 window.onerror=function(m,u,l){document.getElementById("app").innerHTML="<div style='padding:20px;color:#000;background:#fff'>Error: "+m+" (línea "+l+")</div>"};
-var S={compradoras:[],prendas:[],pagos:[],vivos:[],vivoActual:null};
+var S={compradoras:[],prendas:[],pagos:[],vivos:[],encargos:[],vivoActual:null};
 var tab='inicio',sel=null,q='',resVivo='todos',modo='vivo';
 /* ===== CONFIGURACIÓN DE SUPABASE (pegar los 2 datos acá) ===== */
 var SUPA_URL='https://kokhrqssjuercsdzacby.supabase.co', SUPA_KEY='sb_publishable_w9MqMkQNVtWrF4rJrI82eQ_FRek2Qf9';
 /* ===== SINCRONIZACIÓN ===== */
-var KEYS=['compradoras','prendas','pagos','vivos'],db=null,base=null,ver=0,saving=false,dirty=false,online=true,me='',timers=false;
+var KEYS=['compradoras','prendas','pagos','vivos','encargos'],db=null,base=null,ver=0,saving=false,dirty=false,online=true,me='',timers=false;
 function norm2(d){var o={};d=d||{};KEYS.forEach(function(k){o[k]=Array.isArray(d[k])?d[k]:[]});return o}
 function snap(d){var o=norm2(d);return JSON.parse(JSON.stringify(o))}
 function cuenta(d){return KEYS.reduce(function(a,k){return a+d[k].length},0)}
@@ -67,12 +67,32 @@ function bajarExcel(){if(!window.XLSX)return aviso('No se pudo cargar Excel, rev
   var pr=S.prendas.slice().sort(ord).map(function(x){return {'Fecha':fe(x),'Clienta':nc(x.cid),'Prenda':x.desc,'Precio':x.precio,'Origen':org(x)}});
   var pa=S.pagos.slice().sort(ord).map(function(x){return {'Fecha':fe(x),'Clienta':nc(x.cid),'Monto pagado':x.monto,'Nota':x.nota||'','Origen':org(x)}});
   var vi=S.vivos.slice().sort(function(a,b){return a.fecha<b.fecha?-1:1}).map(function(v){return {'Fecha':fdate(v.fecha),'Turno':v.turno}});
+  var en=(S.encargos||[]).slice().sort(function(a,b){return a.fecha<b.fecha?-1:1}).map(function(e){return {'Fecha del pedido':fdate(e.fecha),'Clienta':nc(e.cid),'Encargo':e.desc,'Precio':e.precio||'','Para cuándo':e.para?fdate(e.para):'','Estado':e.estado}});
   var wb=XLSX.utils.book_new();
-  [['Clientas',cl],['Prendas',pr],['Pagos',pa],['Vivos',vi]].forEach(function(h){var ws=XLSX.utils.json_to_sheet(h[1]);
+  [['Clientas',cl],['Prendas',pr],['Pagos',pa],['Vivos',vi],['Encargos',en]].forEach(function(h){var ws=XLSX.utils.json_to_sheet(h[1]);
     var k=h[1].length?Object.keys(h[1][0]):[];ws['!cols']=k.map(function(c){return {wch:Math.max(14,c.length+4)}});XLSX.utils.book_append_sheet(wb,ws,h[0])});
   XLSX.writeFile(wb,'mis-vivos-'+hoy()+'.xlsx')}
+function viewEncargos(){
+  var E=S.encargos||[],h='<h1>📦 Encargos</h1><button onclick="formEncargo()">➕ Nuevo encargo</button><div style="margin-top:12px"></div>';
+  var ab=E.filter(function(e){return e.estado!='Entregado'}).sort(function(a,b){return (a.para||'9')<(b.para||'9')?-1:1});
+  var en=E.filter(function(e){return e.estado=='Entregado'}).sort(function(a,b){return a.fecha<b.fecha?1:-1});
+  h+='<h2>Por entregar ('+ab.length+')</h2>'+(ab.length?ab.map(cardEnc).join(''):'<div class="mut">No hay encargos pendientes.</div>');
+  if(en.length)h+='<h2>Entregados ('+en.length+')</h2>'+en.map(cardEnc).join('');
+  return h}
+function cardEnc(e){var c=comp(e.cid),sig=e.estado=='Pendiente'?'✅ Marcar listo':e.estado=='Listo'?'📦 Marcar entregado':'',col=e.estado=='Listo'?'ok':e.estado=='Pendiente'?'bad':'mut';
+  return '<div class="card"><div class="row"><b>'+esc(c?c.nombre:'(clienta borrada)')+'</b><b class="'+col+'">'+e.estado+'</b></div><div style="margin:6px 0">'+esc(e.desc)+'</div><div class="mut">Pedido: '+fdate(e.fecha)+(e.para?' · Para: '+fdate(e.para):'')+(e.precio?' · '+money(e.precio):'')+'</div><div class="row" style="margin-top:10px">'+(sig?'<button style="margin:0" onclick="sigEnc(\''+e.id+'\')">'+sig+'</button>':'<span></span>')+'<button class="del" onclick="delEnc(\''+e.id+'\')">🗑 Borrar</button></div></div>'}
+function formEncargo(){
+  if(!S.compradoras.length)return aviso('Primero agregá a la clienta en la sección Clientas');
+  var op=S.compradoras.slice().sort(function(a,b){return norm(a.nombre)<norm(b.nombre)?-1:1}).map(function(c){return '<option value="'+c.id+'">'+esc(c.nombre)+'</option>'}).join('');
+  modal('<h2>Nuevo encargo</h2><label>Clienta</label><select id="ec">'+op+'</select><label>¿Qué encargó?</label><input id="ed" placeholder="Ej: Jean azul talle 40"><label>Precio (opcional)</label><input id="ep" type="number" inputmode="decimal" placeholder="Ej: 25000"><label>Para cuándo (opcional)</label><input id="ef" type="date"><button onclick="okEncargo()">Guardar</button><button class="sec" onclick="closeM()">Cancelar</button>')}
+function okEncargo(){var d=$('ed').value.trim();if(!d)return aviso('Escribí qué encargó');
+  if(!S.encargos)S.encargos=[];
+  S.encargos.push({id:uid(),cid:$('ec').value,desc:d,precio:parseFloat($('ep').value)||0,para:$('ef').value||'',fecha:hoy(),estado:'Pendiente'});
+  save();closeM();render()}
+function sigEnc(id){var e=(S.encargos||[]).filter(function(x){return x.id==id})[0];if(!e)return;e.estado=e.estado=='Pendiente'?'Listo':'Entregado';save();render()}
+function delEnc(id){ask('¿Borrar este encargo?',function(){S.encargos=(S.encargos||[]).filter(function(x){return x.id!=id});save();render()})}
 function restaurar(inp){var f=inp.files[0];inp.value='';if(!f)return;var r=new FileReader();
-  r.onload=function(){try{var d=JSON.parse(r.result);if(!KEYS.every(function(k){return Array.isArray(d[k])}))throw 0;
+  r.onload=function(){try{var d=JSON.parse(r.result);if(!['compradoras','prendas','pagos','vivos'].every(function(k){return Array.isArray(d[k])}))throw 0;
     if(!confirm('Esto REEMPLAZA todos los datos actuales por los de la copia. ¿Seguro?'))return;
     var n=snap(d);KEYS.forEach(function(k){S[k]=n[k]});if(!vivo(S.vivoActual))S.vivoActual=S.vivos.length?S.vivos[S.vivos.length-1].id:null;
     save();render();aviso('Copia restaurada.')}catch(e){aviso('Ese archivo no es una copia válida.')}};
@@ -148,9 +168,10 @@ function render(){
   else if(tab=='inicio')h=viewInicio();
   else if(tab=='vivo')h=viewVivo();
   else if(tab=='gente'||tab=='dia')h=viewGente();
+  else if(tab=='enc')h=viewEncargos();
   else h=viewResumen();
   $('app').innerHTML=h+pie();pintaEstado();
-  $('nav').innerHTML=sel?'':[['inicio','🏠','Inicio'],['vivo','🎥','Vivo'],['dia','🛍','Diarias'],['gente','👩','Clientas'],['res','📋','Resumen']].map(function(t){return '<div class="'+(tab==t[0]?'on':'')+'" onclick="go(\''+t[0]+'\')"><span>'+t[1]+'</span>'+t[2]+'</div>'}).join('');
+  $('nav').innerHTML=sel?'':[['inicio','🏠','Inicio'],['vivo','🎥','Vivo'],['dia','🛍','Diarias'],['gente','👩','Clientas'],['enc','📦','Encargos'],['res','📋','Resumen']].map(function(t){return '<div class="'+(tab==t[0]?'on':'')+'" onclick="go(\''+t[0]+'\')"><span>'+t[1]+'</span>'+t[2]+'</div>'}).join('');
 }
 function viewInicio(){
   var nm=['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'],dias=[],idx={};
@@ -275,7 +296,7 @@ function delPrenda(id){
 }
 function delItem(k,id){ask('¿Borrar este pago?',function(){S[k]=S[k].filter(function(x){return x.id!=id});save();render()})}
 function delPersona(id){var c=comp(id);ask('¿Borrar a '+c.nombre+' con todas sus compras y pagos? No se puede deshacer.',function(){S.compradoras=S.compradoras.filter(function(x){return x.id!=id});S.prendas=S.prendas.filter(function(x){return x.cid!=id});S.pagos=S.pagos.filter(function(x){return x.cid!=id});save();sel=null;render()})}
-function borrarTodo(){ask('¿Borrar TODOS los datos de la app (clientas, ventas, pagos y vivos)? No se puede deshacer.',function(){S={compradoras:[],prendas:[],pagos:[],vivos:[],vivoActual:null};save();sel=null;tab='inicio';render()})}
+function borrarTodo(){ask('¿Borrar TODOS los datos de la app (clientas, ventas, pagos, vivos y encargos)? No se puede deshacer.',function(){S={compradoras:[],prendas:[],pagos:[],vivos:[],encargos:[],vivoActual:null};save();sel=null;tab='inicio';render()})}
 
 function viewResumen(){
   var vid=resVivo=='todos'?null:resVivo;
