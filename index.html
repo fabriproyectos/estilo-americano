@@ -56,12 +56,20 @@ function aplicar(remoto,v){var out=merge(base,S,norm2(remoto));KEYS.forEach(func
 function pintaEstado(){var e=$('st');if(e)e.innerHTML=(online?'🟢 Sincronizado':'🔴 Sin conexión, se reintenta solo')+' · '+esc(me)+' · <a style="text-decoration:underline" onclick="salir()">Salir</a>'}
 function pie(){return '<div id="st" class="mut" style="text-align:center;margin-top:22px;font-size:14px"></div><div style="margin-top:14px"><button class="sec" onclick="bajarExcel()">📥 Descargar Excel</button><button class="sec" onclick="bajarCopia()">💾 Guardar copia de seguridad</button><button class="sec" onclick="$(\'rf\').click()">♻️ Restaurar copia</button><input id="rf" type="file" accept=".json" style="display:none" onchange="restaurar(this)"></div>'}
 function bajarArchivo(blob,nombre){var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=nombre;document.body.appendChild(a);a.click();setTimeout(function(){URL.revokeObjectURL(a.href);a.remove()},1000)}
-function hoy(){return new Date().toISOString().slice(0,10)}
 function bajarCopia(){bajarArchivo(new Blob([JSON.stringify(snap(S),null,1)],{type:'application/json'}),'copia-vivos-'+hoy()+'.json');aviso('Copia descargada. Guardala en un lugar seguro.')}
 function bajarExcel(){if(!window.XLSX)return aviso('No se pudo cargar Excel, revisá tu conexión.');
-  var wb=XLSX.utils.book_new(),nom={compradoras:'Clientas',prendas:'Prendas',pagos:'Pagos',vivos:'Vivos'};
-  KEYS.forEach(function(k){var f=(S[k]||[]).map(function(x){var o={};Object.keys(x).forEach(function(c){var v=x[c];o[c]=(v!==null&&typeof v==='object')?JSON.stringify(v):v});return o});
-    XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(f),nom[k])});
+  var nc=function(id){var c=comp(id);return c?c.nombre:'(clienta borrada)'};
+  var org=function(x){if(x.dia)return 'Venta diaria';var v=vivo(x.vid);return v?'Vivo '+v.turno:'Sin vivo'};
+  var fe=function(x){return fdate(fechaDe(x))};
+  var ord=function(a,b){return fechaDe(a)<fechaDe(b)?-1:fechaDe(a)>fechaDe(b)?1:0};
+  var cl=S.compradoras.map(function(c){var t=0,p=0;S.prendas.forEach(function(x){if(x.cid==c.id)t+=x.precio});S.pagos.forEach(function(x){if(x.cid==c.id)p+=x.monto});
+    return {'Nombre':c.nombre,'Teléfono':c.tel||'','Total comprado':t,'Total pagado':p,'Debe':t-p}}).sort(function(a,b){return a.Nombre.localeCompare(b.Nombre)});
+  var pr=S.prendas.slice().sort(ord).map(function(x){return {'Fecha':fe(x),'Clienta':nc(x.cid),'Prenda':x.desc,'Precio':x.precio,'Origen':org(x)}});
+  var pa=S.pagos.slice().sort(ord).map(function(x){return {'Fecha':fe(x),'Clienta':nc(x.cid),'Monto pagado':x.monto,'Nota':x.nota||'','Origen':org(x)}});
+  var vi=S.vivos.slice().sort(function(a,b){return a.fecha<b.fecha?-1:1}).map(function(v){return {'Fecha':fdate(v.fecha),'Turno':v.turno}});
+  var wb=XLSX.utils.book_new();
+  [['Clientas',cl],['Prendas',pr],['Pagos',pa],['Vivos',vi]].forEach(function(h){var ws=XLSX.utils.json_to_sheet(h[1]);
+    var k=h[1].length?Object.keys(h[1][0]):[];ws['!cols']=k.map(function(c){return {wch:Math.max(14,c.length+4)}});XLSX.utils.book_append_sheet(wb,ws,h[0])});
   XLSX.writeFile(wb,'mis-vivos-'+hoy()+'.xlsx')}
 function restaurar(inp){var f=inp.files[0];inp.value='';if(!f)return;var r=new FileReader();
   r.onload=function(){try{var d=JSON.parse(r.result);if(!KEYS.every(function(k){return Array.isArray(d[k])}))throw 0;
